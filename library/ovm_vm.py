@@ -9,7 +9,7 @@ description:
   - Module to manage Virtual Machine definitions inside Oracle-VM
 author: "Stephan Arts, @stephanarts"
 notes:
-    - This module is tested with OVM 3.3 and 3.4
+    - This module works with OVM 3.3 and 3.4
 requirements:
     - requests package
 options:
@@ -71,13 +71,14 @@ id:
     - the unique identifier. This is the Id used when referencing
     - the vm from other resources.
 '''
-
+#==============================================================
 try:
     import requests
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
 
+#==============================================================
 def auth(ovm_user, ovm_pass):
     """ Set authentication-credentials.
 
@@ -96,7 +97,7 @@ def auth(ovm_user, ovm_pass):
     })
     return session
 
-
+#==============================================================
 class OVMRestClient:
 
     def __init__(self, base_uri, session):
@@ -104,14 +105,41 @@ class OVMRestClient:
         self.base_uri = base_uri
 
     def create(self, object_type, data):
-        response = session.post(
+        response = self.session.post(
             self.base_uri+'/'+object_type,
-            data=json.dumps(data))
+            data=json.dumps(data)
+        )
 
         job = response.json()
+        self.monitor_job(job['responseId']['value'])
+
+    def get(self, object_type, object_id):
+        response = self.session.get(
+            self.base_uri+'/'+object_type+'/'+object_id
+        )
+        return response.json()
+
+    def get_id_for_name(self, object_type, object_name):
+        response = self.session.get(
+            self.base_uri+'/'+object_type+'/id'
+        )
+        for element in resonse.json():
+            if element.name == object_name:
+                return element.id
+
+        return None
+
+    def get_ids(self, object_type):
+        response = self.session.get(
+            self.base_uri+'/'+object_type
+        )
+
+        return response.json()
+
+    def monitor_job(self, job_id):
         while True:
-            response = session.get(
-                self.base_uri+'/Job/'+job['resultId']['value'])
+            response = self.session.get(
+                self.base_uri+'/Job/'+job_id)
             job = response.json()
             if job.summaryDone:
                 if job.jobRunState == 'FAILURE':
@@ -125,7 +153,9 @@ class OVMRestClient:
                 else:
                     break
 
+
 def main():
+    changed = False
     module = AnsibleModule(
         argument_spec=dict(
             state=dict(
@@ -146,14 +176,82 @@ def main():
                     'XEN_PVM',
                     'LDOMS_PVM',
                     'UNKNOWN']),
+            memory=dict(
+                default=4096,
+                type='int'),
+            max_memory=dict(
+                default=None,
+                type='int'),
+            vcpu_cores=dict(
+                default=2,
+                type='int'),
+            max_vcpu_cores=dict(
+                default=None,
+                type='int'),
         )
     )
     if HAS_REQUESTS is False:
         module.fail_json(
             msg="ovm_vm module requires the 'requests' package")
 
+    memory = module.params['memory']
+    max_memory = module.params['max_memory']
+    vcpu_cores = module.params['vcpu_cores']
+    max_vcpu_cores = module.params['max_vcpu_cores']
+
+    # Check memory requirements
+    if memory%1024 != 0:
+        module.fail_json(
+            msg="memory must be a multitude of 1024")
+    if max_memory is None:
+        max_memory = memory
+    else:
+        if max_memory < memory:
+            module.fail_json(
+                msg="max_memory < memory")
+        if max_memory%1024 != 0:
+            module.fail_json(
+                msg="max_memory must be a multitude of 1024")
+    if max_vcpu_cores is None:
+        max_vcpu_cores = vcpu_cores
+
     base_uri = module.params['ovm_host']+'/ovm/core/wsapi/rest'
     session = auth(module.params['ovm_user'], module.params['ovm_pass'])
+    client = OVMRestClient(base_uri, session)
+
+    repository_id = client.get_id_for_name(
+        'Repository',
+        module.param['repository'])
+
+    server_pool_id = client.get_id_for_name(
+        'ServerPool',
+        module.param['server_pool'])
+
+    vm_id = client.get_id_for_name(
+        'Vm',
+        module.param['name'])
+
+    # Create a new vm if it does not exist
+    if vm_id is None:
+        vm = client.create(
+            'Vm',
+            data = {
+                'repositoryId': repository_id,
+                'serverPoolId': server_pool_id,
+                'vmDomainType': vm_domain_type,
+                'name': module.params['name'],
+                'cpuCount': vcpu_cores,
+                'cpuCountLimit': max_vcpu_cores,
+                'memory': memory,
+                'memoryLimit': max_memory
+            }
+        )
+        changed = True
+    else:
+        vm = client.get(
+            'Vm',
+            vm_id
+        )
 
     module.exit_json(changed=False)
 
