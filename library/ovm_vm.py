@@ -54,7 +54,28 @@ options:
 '''
 
 EXAMPLES = '''
-- action: ovm_vm name='example_host'
+- name: Create a Virtual Machine
+  ovm_vm:
+    name: 'example_host'
+    ovm_user: 'admin'
+    ovm_pass: 'password'
+    server_pool: 'Madrid'
+    repository: 'Repo1'
+    memory: 4096
+    vcpu_cores: 4
+    network_interfaces:
+      - name: eth0
+        description: koffie
+        mac: '00:00:00:00:00:00'
+        network: 456787654
+    disks:
+      - name: example_host_system.1
+        description: '...'
+        size: 50G
+        sparse: False
+        repository: 'Repo1'
+    boot_order:
+      - PXE
 '''
 
 RETURN = '''
@@ -71,6 +92,9 @@ id:
     - the unique identifier. This is the Id used when referencing
     - the vm from other resources.
 '''
+
+WANT_JSON = ''
+
 #==============================================================
 try:
     import requests
@@ -188,6 +212,13 @@ def main():
             max_vcpu_cores=dict(
                 default=None,
                 type='int'),
+            networks=dict(
+                type='list'),
+            disks=dict(
+                type='list'),
+            boot_order=dict(
+                required=True
+                type='list'),
         )
     )
     if HAS_REQUESTS is False:
